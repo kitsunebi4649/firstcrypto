@@ -6,18 +6,18 @@ import hashlib
 class Crypto(object):
 
     def __init__(self, plaintext_bytes):
-        self._plaintext_bytes_len = len(plaintext_bytes)
-        self._plaintext_int = int(plaintext_bytes.hex(), base=16)  # なぜか最後の文字を乱数の範囲に含む
+        self.plaintext_bytes = plaintext_bytes
 
     def encrypt(self, password):
-        key = self._generate_key_int(self._plaintext_bytes_len, password)
-        return self._get_bytes_from_int(self._plaintext_int ^ key, self._plaintext_bytes_len)
+        plaintext_bytes_len = len(self.plaintext_bytes)
+        key = self._generate_key_int(plaintext_bytes_len, password)
+        return self._get_bytes_from_int(int(self.plaintext_bytes.hex(), base=16) ^ key, plaintext_bytes_len)
 
     @staticmethod
     def _generate_key_int(plaintext_bytes_len, password):
         seed = int(hashlib.sha256(str(password).encode('utf-8')).hexdigest(), base=16)
         random.seed(seed)
-        return random.randint(0, 256 ** plaintext_bytes_len - 1)
+        return random.randint(0, 256 ** plaintext_bytes_len - 1)  # なぜか最後の文字を乱数の範囲に含む
 
     @staticmethod
     def _get_bytes_from_int(num, total_bytes_len):  # total_lenは数値を指定しないとbyte変換エラーが起こる
@@ -31,7 +31,13 @@ class Crypto(object):
 
 
 class File_Crypto(Crypto):
-
+    """
+    version         : 1byte ('\x01')
+    checksum        : 32 bytes (SHA256)
+    filename length : 2 bytes (under 65536 bytes)
+    filename        : 1~65536 bytes (utf-8)
+    data            : 1~ bytes
+    """
     def __init__(self, filename):
         with open(filename, 'br') as fr:
             file_bytes = fr.read()
@@ -43,7 +49,7 @@ class File_Crypto(Crypto):
     def encrypt(self, password):
         filename_bytes = os.path.split(self.filepath)[1].encode('utf-8')
         filename_len = bytes.fromhex(f'{len(filename_bytes):04x}')
-        new_filename = os.path.splitext(self.filepath)[0] + '.enc'
+        new_filename = f'{os.path.splitext(self.filepath)[0]}.enc'
         with open(new_filename, 'bw') as ew:  # TODO  ファイル名もソルトもファイル内に保持
             ew.write(self.version + self.checksum + filename_len + filename_bytes + super().encrypt(password))
 
@@ -61,7 +67,7 @@ class File_Crypto(Crypto):
         if checksum != hashlib.sha256(decrypted_data).digest():
             raise ValueError('wrong password')
 
-        new_filepath = os.path.split(encrypted_file_path)[0] + '/' + filename
+        new_filepath = f'{os.path.split(encrypted_file_path)[0]}/{filename}'
 
         with open(new_filepath, 'bw') as fw:
             fw.write(decrypted_data)
