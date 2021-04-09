@@ -3,12 +3,11 @@ import os
 import hashlib
 
 
-class CRYPTO(object):
+class Crypto(object):
 
     def __init__(self, plaintext_bytes):
         self._plaintext_bytes_len = len(plaintext_bytes)
-        self._plaintext_int = int(plaintext_bytes.hex(), base=16)
-        # なぜか最後の文字を乱数の範囲に含む
+        self._plaintext_int = int(plaintext_bytes.hex(), base=16)  # なぜか最後の文字を乱数の範囲に含む
 
     def encrypt(self, password):
         key = self._generate_key_int(self._plaintext_bytes_len, password)
@@ -16,7 +15,7 @@ class CRYPTO(object):
 
     @staticmethod
     def _generate_key_int(plaintext_bytes_len, password):
-        seed = int(hashlib.sha256(str(password).encode()).hexdigest(), base=16)
+        seed = int(hashlib.sha256(str(password).encode('utf-8')).hexdigest(), base=16)
         random.seed(seed)
         return random.randint(0, 256 ** plaintext_bytes_len - 1)
 
@@ -27,36 +26,48 @@ class CRYPTO(object):
 
     @staticmethod
     def decrypt(cryptogram_bytes, password):
-        decrypt_int = int(cryptogram_bytes.hex(), base=16) ^ CRYPTO._generate_key_int(len(cryptogram_bytes), password)
-        return CRYPTO._get_bytes_from_int(decrypt_int, len(cryptogram_bytes))
+        decrypt_int = int(cryptogram_bytes.hex(), base=16) ^ Crypto._generate_key_int(len(cryptogram_bytes), password)
+        return Crypto._get_bytes_from_int(decrypt_int, len(cryptogram_bytes))
 
 
-class CRYPTO_FILE(CRYPTO):
+class File_Crypto(Crypto):
 
     def __init__(self, filename):
-        self.filename = filename
         with open(filename, 'br') as fr:
             file_bytes = fr.read()
+        self.version = bytes.fromhex('01')
+        self.checksum = hashlib.sha256(file_bytes).digest()
+        self.filepath = filename
         super().__init__(file_bytes)
 
     def encrypt(self, password):
-        with open(self.filename+'.enc', 'bw') as ew:
-            ew.write(super().encrypt(password))
+        filename_bytes = os.path.split(self.filepath)[1].encode('utf-8')
+        filename_len = bytes.fromhex(f'{len(filename_bytes):04x}')
+        new_filename = os.path.splitext(self.filepath)[0] + '.enc'
+        with open(new_filename, 'bw') as ew:  # TODO  ファイル名もソルトもファイル内に保持
+            ew.write(self.version + self.checksum + filename_len + filename_bytes + super().encrypt(password))
 
     @staticmethod
-    def decrypt(encrypted_file_path, password, underscore=False):
+    def decrypt(encrypted_file_path, password):
         with open(encrypted_file_path, 'br') as er:
-            encrypted_data = er.read()
+            version = er.read(1)
+            checksum = er.read(32)
+            filename_len = int(er.read(2).hex(), base=16)
+            filename = er.read(filename_len).decode('utf-8')
+            decrypted_data = Crypto.decrypt(er.read(), password)
 
-        original_filename = os.path.splitext(encrypted_file_path)[0]
-        if underscore:
-            original_filename = os.path.split(original_filename)[0] + '/_' + os.path.split(original_filename)[1]
+        if version != bytes.fromhex('01'):
+            raise Exception('version error')
+        if checksum != hashlib.sha256(decrypted_data).digest():
+            raise ValueError('wrong password')
 
-        with open(original_filename, 'bw') as fw:
-            fw.write(CRYPTO.decrypt(encrypted_data, password))
+        new_filepath = os.path.split(encrypted_file_path)[0] + '/' + filename
+
+        with open(new_filepath, 'bw') as fw:
+            fw.write(decrypted_data)
 
 
 if __name__ == '__main__':
-    # file = CRYPTO_FILE('files/Monero_Promo.m4v')
-    # file.encrypt('bdibda')
-    CRYPTO_FILE.decrypt('files/Monero_Promo.m4v.enc', 'bdibda', True)
+    file = File_Crypto('Promo (1).m4v')
+    file.encrypt('1234abc')
+    File_Crypto.decrypt('files/Promo (1).enc', '1234abc')
